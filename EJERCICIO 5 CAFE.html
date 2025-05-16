@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>99% Cafeína - Exportación de Café</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      background: linear-gradient(to right, #7c5c3f, #a67c52);
+      color: #fff;
+      padding: 20px;
+    }
+    .card {
+      background-color: #fff;
+      color: #000;
+      margin-bottom: 15px;
+    }
+    .btn-export {
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="text-center mb-4">Tickets de Exportación de Café - 99% Cafeína</h1>
+
+    <!-- Login/Register UI -->
+    <div id="authSection">
+      <div class="card p-3 mb-3">
+        <h5>Login</h5>
+        <input id="email" class="form-control mb-2" placeholder="Correo">
+        <input id="password" class="form-control mb-2" placeholder="Contraseña" type="password">
+        <button class="btn btn-success" onclick="login()">Iniciar sesión</button>
+        <button class="btn btn-link" onclick="recoverPassword()">Recuperar contraseña</button>
+        <hr>
+        <h5>Registro</h5>
+        <input id="regEmail" class="form-control mb-2" placeholder="Correo">
+        <input id="regPassword" class="form-control mb-2" placeholder="Contraseña" type="password">
+        <button class="btn btn-primary" onclick="register()">Registrarse</button>
+      </div>
+    </div>
+
+    <!-- App UI -->
+    <div id="appSection" class="d-none">
+      <button class="btn btn-danger mb-3" onclick="logout()">Cerrar sesión</button>
+
+      <div class="card p-3 mb-4">
+        <h5>Nuevo Ticket</h5>
+        <input id="cliente" class="form-control mb-2" placeholder="Nombre del Cliente">
+        <input id="pais" class="form-control mb-2" placeholder="País destino">
+        <input id="kilos" class="form-control mb-2" type="number" placeholder="Kg a exportar">
+        <input id="producto" class="form-control mb-2" placeholder="Tipo de Producto">
+        <input id="titulo" class="form-control mb-2" placeholder="Título del Ticket">
+        <textarea id="descripcion" class="form-control mb-2" placeholder="Descripción del Pedido"></textarea>
+        <select id="prioridad" class="form-select mb-2">
+          <option value="Alta">Alta</option>
+          <option value="Media">Media</option>
+          <option value="Baja">Baja</option>
+        </select>
+        <select id="estado" class="form-select mb-2">
+          <option value="Abierto">Abierto</option>
+          <option value="Cerrado">Cerrado</option>
+        </select>
+        <button class="btn btn-warning" onclick="crearTicket()">Crear Ticket</button>
+      </div>
+
+      <div id="ticketList" class="mb-4"></div>
+
+      <button class="btn btn-outline-light btn-export" onclick="exportarExcel()"><i class="fas fa-file-excel"></i> Exportar Todo a Excel</button>
+
+      <div class="mt-4">
+        <h5>Estadísticas por Prioridad</h5>
+        <canvas id="graficoPrioridades"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase Config -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.7.1/firebase-app.js";
+    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/11.7.1/firebase-auth.js";
+    import { getFirestore, collection, addDoc, getDocs, query, where, Timestamp } from "https://www.gstatic.com/firebasejs/11.7.1/firebase-firestore.js";
+    import { writeFile, utils, book_new, aoa_to_sheet, book_append_sheet } from "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.mjs";
+    import { jsPDF } from "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAXz-Ii0wkdAkHk2Rx77EqTZnIAD6aiQK0",
+      authDomain: "tickets-cafe-683fd.firebaseapp.com",
+      projectId: "tickets-cafe-683fd",
+      storageBucket: "tickets-cafe-683fd.appspot.com",
+      messagingSenderId: "882267250950",
+      appId: "1:882267250950:web:c563ad2b45e07c17b0fe87"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth();
+    const db = getFirestore();
+
+    let userId = null;
+    onAuthStateChanged(auth, user => {
+      if (user) {
+        userId = user.uid;
+        document.getElementById("authSection").classList.add("d-none");
+        document.getElementById("appSection").classList.remove("d-none");
+        cargarTickets();
+      } else {
+        userId = null;
+        document.getElementById("authSection").classList.remove("d-none");
+        document.getElementById("appSection").classList.add("d-none");
+      }
+    });
+
+    window.register = () => {
+      createUserWithEmailAndPassword(auth, regEmail.value, regPassword.value).catch(e => alert(e.message));
+    };
+
+    window.login = () => {
+      signInWithEmailAndPassword(auth, email.value, password.value).catch(e => alert(e.message));
+    };
+
+    window.logout = () => signOut(auth);
+
+    window.recoverPassword = () => {
+      if (!email.value) return alert("Ingresa tu correo");
+      sendPasswordResetEmail(auth, email.value).then(() => alert("Correo enviado"));
+    };
+
+    window.crearTicket = async () => {
+      const ticket = {
+        folio: "TCKT-" + Date.now(),
+        cliente: cliente.value,
+        pais: pais.value,
+        kilos: kilos.value,
+        producto: producto.value,
+        titulo: titulo.value,
+        descripcion: descripcion.value,
+        prioridad: prioridad.value,
+        estado: estado.value,
+        fecha: Timestamp.now(),
+        uid: userId
+      };
+      await addDoc(collection(db, "tickets"), ticket);
+      ticketForm.reset();
+      cargarTickets();
+    };
+
+    async function cargarTickets() {
+      const q = query(collection(db, "tickets"), where("uid", "==", userId));
+      const snap = await getDocs(q);
+      let html = "";
+      let stats = { Alta: 0, Media: 0, Baja: 0 };
+      snap.forEach(doc => {
+        const d = doc.data();
+        stats[d.prioridad]++;
+        html += `<div class='card p-3'><h5>${d.titulo}</h5><p>${d.descripcion}</p><small>Cliente: ${d.cliente} | País: ${d.pais} | Prioridad: ${d.prioridad} | Estado: ${d.estado}</small><br><button class='btn btn-sm btn-outline-danger mt-2' onclick='exportarPDF(${JSON.stringify(d)})'><i class="fas fa-file-pdf"></i> Exportar PDF</button></div>`;
+      });
+      document.getElementById("ticketList").innerHTML = html;
+      renderChart(stats);
+    }
+
+    window.exportarExcel = async () => {
+      const q = query(collection(db, "tickets"), where("uid", "==", userId));
+      const snap = await getDocs(q);
+      const rows = [["Folio", "Cliente", "País", "Producto", "Kg", "Prioridad", "Estado"]];
+      snap.forEach(doc => {
+        const d = doc.data();
+        rows.push([d.folio, d.cliente, d.pais, d.producto, d.kilos, d.prioridad, d.estado]);
+      });
+      const wb = book_new();
+      const ws = aoa_to_sheet(rows);
+      book_append_sheet(wb, ws, "Tickets");
+      writeFile(wb, "tickets_exportacion.xlsx");
+    };
+
+    window.exportarPDF = (d) => {
+      const pdf = new jsPDF();
+      pdf.text(`Ticket: ${d.folio}`, 10, 10);
+      pdf.text(`Cliente: ${d.cliente}`, 10, 20);
+      pdf.text(`País: ${d.pais}`, 10, 30);
+      pdf.text(`Producto: ${d.producto}`, 10, 40);
+      pdf.text(`Kilos: ${d.kilos}`, 10, 50);
+      pdf.text(`Título: ${d.titulo}`, 10, 60);
+      pdf.text(`Descripción: ${d.descripcion}`, 10, 70);
+      pdf.text(`Prioridad: ${d.prioridad} | Estado: ${d.estado}`, 10, 80);
+      pdf.save(`${d.folio}.pdf`);
+    };
+
+    function renderChart(data) {
+      const ctx = document.getElementById("graficoPrioridades").getContext("2d");
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(data),
+          datasets: [{
+            label: 'Tickets por Prioridad',
+            data: Object.values(data),
+            backgroundColor: ['#e53935', '#fdd835', '#43a047']
+          }]
+        },
+        options: { responsive: true, plugins: { legend: { display: false } } }
+      });
+    }
+  </script>
+</body>
+</html>
